@@ -85,17 +85,11 @@ jobs:
     - name: Download MuMu exe to Desktop
       shell: pwsh
       run: |
-        $url = "https://raw.githubusercontent.com/mihandkhush/edp2/main/mumu.exe"
-        $desktop = [Environment]::GetFolderPath("Desktop")
-        $out = Join-Path $desktop "mumu.exe"
-
-        Invoke-WebRequest -Uri $url -OutFile $out
-
-        if (Test-Path $out) {
-          Write-Host "MuMu downloaded successfully to Desktop"
-        } else {
-          throw "MuMu download failed"
-        }
+    - name: Download MuMu Player
+      shell: pwsh
+      run: |
+        curl -L -o "C:\Users\mtqmanik\Desktop\MuMuSetup.exe" `
+        "https://a11.gdl.netease.com/MuMu_5.0.7_gw-win-download_all_1761811684.exe?n=MuMu_5.0.7_xR9fESC.exe&key1=17d527515c89765ca756ad7419678abe&key2=694d6e16"
 
     # ---------------- PYTHON ----------------
     - name: Install Python modules
