@@ -22,14 +22,14 @@ jobs:
       uses: actions/checkout@v4
 
     # ---------------- SYSTEM ----------------
-    - name: System Info
+    - name: Show System Info
       shell: pwsh
       run: |
         whoami
         systeminfo | findstr /B /C:"OS Name"
 
     # ---------------- AUTH KEY ----------------
-    - name: Read & Consume Auth Key
+    - name: Read & Consume Tailscale Auth Key
       shell: pwsh
       run: |
         $authFile = "$env:GITHUB_WORKSPACE\auth.txt"
@@ -38,17 +38,24 @@ jobs:
         if (-not (Test-Path $authFile)) { throw "auth.txt missing" }
         if (-not (Test-Path $usedFile)) { New-Item $usedFile -ItemType File | Out-Null }
 
-        $keys = Get-Content $authFile | Where-Object { $_.Trim() -ne "" }
+        # Read all non-empty lines as strings safely
+        $keys = Get-Content $authFile | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
+
         if ($keys.Count -eq 0) { throw "No auth key left" }
 
-        $key = $keys[0].Trim()
+        # Pick first key
+        $key = [string]$keys[0]
+        Write-Host "Using Auth Key: $key"
         echo "TS_KEY=$key" >> $env:GITHUB_ENV
 
-        Add-Content $usedFile $key
+        # Save used key
+        Add-Content -Path $usedFile -Value $key
+
+        # Remove used key from auth.txt
         $keys | Select-Object -Skip 1 | Set-Content $authFile
 
     # ---------------- TAILSCALE ----------------
-    - name: Install & Login Tailscale (FIXED)
+    - name: Install & Login Tailscale
       shell: pwsh
       run: |
         $exe = "$env:ProgramFiles\Tailscale\tailscale.exe"
@@ -63,6 +70,7 @@ jobs:
         Start-Service Tailscale
         Start-Sleep 8
 
+        # Reset previous login to avoid invalid key errors
         & $exe logout | Out-Null
         Start-Sleep 3
 
@@ -81,7 +89,7 @@ jobs:
         if (-not $ip) { throw "Tailscale login failed" }
 
         echo "TS_IP=$ip" >> $env:GITHUB_ENV
-        Write-Host "RDP IP: $ip"
+        Write-Host "Tailscale IP: $ip"
 
     # ---------------- RDP ----------------
     - name: Enable RDP
