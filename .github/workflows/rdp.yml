@@ -23,8 +23,8 @@ jobs:
     env:
       RDP_USER: mtqmanik
       RDP_PASS: Manik2200@@
-      TELEGRAM_BOT_TOKEN: ${{ secrets.8234809290:AAE7EyzYkG8JIRk6fPTDBtXL6Ttngp0mtfQ }}
-      TELEGRAM_CHAT_ID: ${{ secrets.8056859551 }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
     steps:
       - name: Show runner info
