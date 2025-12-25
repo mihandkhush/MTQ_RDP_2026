@@ -1,4 +1,4 @@
-name: RDP 2026 Telegram
+name: RDP 2026
 
 on:
   workflow_dispatch:
@@ -6,10 +6,6 @@ on:
       ts_authkey:
         description: "Tailscale Auth key"
         required: true
-      cycles:
-        description: "Number of cycles"
-        required: false
-        default: "1"
 
 permissions:
   contents: read
@@ -27,100 +23,77 @@ jobs:
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
     steps:
-      - name: Show runner info
-        shell: pwsh
-        run: |
-          whoami
-          systeminfo | findstr /B /C:"OS Name"
+    - name: Show runner info
+      shell: pwsh
+      run: |
+        whoami
+        systeminfo | findstr /B /C:"OS Name"
 
-      # ---------------- TAILSCALE ----------------
-      - name: Install and Start Tailscale
-        shell: pwsh
-        run: |
-          $exe = "$env:ProgramFiles\Tailscale\tailscale.exe"
+    # Tailscale
+    - name: Install and Start Tailscale
+      shell: pwsh
+      run: |
+        $exe = "$env:ProgramFiles\Tailscale\tailscale.exe"
+        if (-not (Test-Path $exe)) {
+          Invoke-WebRequest `
+            https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi `
+            -OutFile tailscale.msi
+          Start-Process msiexec.exe -ArgumentList "/i tailscale.msi /quiet /norestart" -Wait
+        }
+        Start-Service Tailscale
+        Start-Sleep 10
+        & $exe up --authkey "${{ inputs.ts_authkey }}" --hostname "bullet"
+        for ($i=0; $i -lt 10; $i++) {
+          $ip = & $exe ip -4 | Select-Object -First 1
+          if ($ip) { break }
+          Start-Sleep 3
+        }
+        if (-not $ip) { throw "Tailscale IP not found" }
+        echo "TS_IP=$ip" >> $env:GITHUB_ENV
+        Write-Host "Tailscale IP: $ip"
 
-          if (-not (Test-Path $exe)) {
-            Invoke-WebRequest `
-              https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi `
-              -OutFile tailscale.msi
-            Start-Process msiexec.exe -ArgumentList "/i tailscale.msi /quiet /norestart" -Wait
-          }
+    # RDP
+    - name: Enable RDP
+      shell: pwsh
+      run: |
+        $sec = ConvertTo-SecureString $env:RDP_PASS -AsPlainText -Force
+        if (-not (Get-LocalUser $env:RDP_USER -EA SilentlyContinue)) {
+          New-LocalUser $env:RDP_USER -Password $sec
+          Add-LocalGroupMember Administrators $env:RDP_USER
+          Add-LocalGroupMember "Remote Desktop Users" $env:RDP_USER
+        }
+        Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-          Start-Service Tailscale
-          Start-Sleep 10
+    # Python modules
+    - name: Install Python modules
+      shell: pwsh
+      run: |
+        python -m pip install --upgrade pip
+        pip install customtkinter uiautomator2 opencv-python playwright
+        py -m playwright install
 
-          & $exe up --authkey "${{ inputs.ts_authkey }}" --hostname "bullet"
+    # MuMu Installer
+    - name: Download MuMu
+      shell: pwsh
+      run: |
+        curl -L -o "C:\Users\mtqmanik\Desktop\MuMuSetup.exe" "https://a11.gdl.netease.com/MuMu_5.0.7_gw-win-download_all_1761811684.exe?n=MuMu_5.0.7_xR9fESC.exe&key1=17d527515c89765ca756ad7419678abe&key2=694d6e16"
+        Start-Process "C:\Users\mtqmanik\Desktop\MuMuSetup.exe" -ArgumentList "/S" -Wait
 
-          for ($i=0; $i -lt 10; $i++) {
-            $ip = & $exe ip -4 | Select-Object -First 1
-            if ($ip) { break }
-            Start-Sleep 3
-          }
+    # Download & extract ZIP
+    - name: Download and Extract File
+      shell: pwsh
+      run: |
+        $zipPath = "C:\Users\mtqmanik\Desktop\myfile.zip"
+        $extractPath = "C:\Users\mtqmanik\Desktop\myfile_extracted"
+        Invoke-WebRequest -Uri "https://drive.usercontent.google.com/download?id=1OjkZn-dDivUQ2w91FOqp4wVzRwPzTueO&export=download&confirm=t&uuid=ba3fa931-9599-4946-81e6-ebbbf490ee7f" -OutFile $zipPath
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractPath)
 
-          if (-not $ip) { throw "Tailscale IP not found" }
-
-          echo "TS_IP=$ip" >> $env:GITHUB_ENV
-          Write-Host "Tailscale IP: $ip"
-
-      # ---------------- RDP ----------------
-      - name: Enable RDP
-        shell: pwsh
-        run: |
-          $sec = ConvertTo-SecureString $env:RDP_PASS -AsPlainText -Force
-
-          if (-not (Get-LocalUser $env:RDP_USER -EA SilentlyContinue)) {
-            New-LocalUser $env:RDP_USER -Password $sec
-            Add-LocalGroupMember Administrators $env:RDP_USER
-            Add-LocalGroupMember "Remote Desktop Users" $env:RDP_USER
-          }
-
-          Set-ItemProperty `
-            "HKLM:\System\CurrentControlSet\Control\Terminal Server" `
-            -Name fDenyTSConnections -Value 0
-
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-
-      # ---------------- PYTHON ----------------
-      - name: Install Python modules
-        shell: pwsh
-        run: |
-          python -m pip install --upgrade pip
-          pip install customtkinter uiautomator2 opencv-python playwright
-          py -m playwright install
-
-      # ---------------- DOWNLOAD MUMU ----------------
-      - name: Download MuMu
-        shell: pwsh
-        run: |
-          curl -L -o "C:\Users\mtqmanik\Desktop\MuMuSetup.exe" "https://a11.gdl.netease.com/MuMu_5.0.7_gw-win-download_all_1761811684.exe?n=MuMu_5.0.7_xR9fESC.exe&key1=17d527515c89765ca756ad7419678abe&key2=694d6e16"
-          Start-Process "C:\Users\mtqmanik\Desktop\MuMuSetup.exe" -ArgumentList "/S" -Wait
-
-      # ---------------- DOWNLOAD ZIP FILE ----------------
-      - name: Download and Extract File
-        shell: pwsh
-        run: |
-          $zipPath = "C:\Users\mtqmanik\Desktop\myfile.zip"
-          $extractPath = "C:\Users\mtqmanik\Desktop\myfile_extracted"
-          Invoke-WebRequest -Uri "https://drive.usercontent.google.com/download?id=1OjkZn-dDivUQ2w91FOqp4wVzRwPzTueO&export=download&confirm=t&uuid=ba3fa931-9599-4946-81e6-ebbbf490ee7f" -OutFile $zipPath
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractPath)
-
-      # ---------------- SEND TELEGRAM ----------------
-      - name: Send RDP info to Telegram
-        shell: pwsh
-        run: |
-          $msg = "✅ RDP is ready`nIP: $env:TS_IP`nUsername: $env:RDP_USER`nPassword: $env:RDP_PASS"
-          $url = "https://api.telegram.org/bot$($env:TELEGRAM_BOT_TOKEN)/sendMessage?chat_id=$($env:TELEGRAM_CHAT_ID)&text=$([uri]::EscapeDataString($msg))"
-          Invoke-WebRequest -Uri $url -UseBasicParsing
-
-      # ---------------- KEEP ALIVE ----------------
-      - name: Keep alive
-        shell: pwsh
-        run: |
-          Start-Sleep -Seconds 21600
-
-      - name: Done
-        shell: pwsh
-        run: |
-          Write-Host "DONE"
-          Write-Host "RDP IP: $env:TS_IP"
+    # Send Telegram message
+    - name: Send RDP info to Telegram
+      shell: pwsh
+      run: |
+        $msg = "✅ RDP is ready`nIP: $env:TS_IP`nUsername: $env:RDP_USER`nPassword: $env:RDP_PASS"
+        $url = "https://api.telegram.org/bot$($env:TELEGRAM_BOT_TOKEN)/sendMessage?chat_id=$($env:TELEGRAM_CHAT_ID)&text=$([uri]::EscapeDataString($msg))"
+        Invoke-WebRequest -Uri $url -UseBasicParsing
