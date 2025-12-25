@@ -1,4 +1,4 @@
-name: RDP 2026
+name: RDP 2026 Telegram
 
 on:
   workflow_dispatch:
@@ -6,29 +6,14 @@ on:
       ts_authkey:
         description: "Tailscale Auth key"
         required: true
-        type: string
-      chat_id:
-        description: "Telegram Chat ID"
-        required: true
-        type: string
-      bot_token:
-        description: "Telegram Bot Token"
-        required: true
-        type: string
+      cycles:
+        description: "Number of cycles"
+        required: false
+        default: "1"
 
-# Increased permissions
 permissions:
-  contents: write
+  contents: read
   actions: write
-  checks: write
-  deployments: write
-  issues: write
-  packages: write
-  pages: write
-  pull-requests: write
-  repository-projects: write
-  security-events: write
-  statuses: write
 
 jobs:
   full:
@@ -38,400 +23,104 @@ jobs:
     env:
       RDP_USER: mtqmanik
       RDP_PASS: Manik2200@@
-      MAIN_RUNTIME_MIN: 360
+      TELEGRAM_BOT_TOKEN: ${{ secrets.8234809290:AAE7EyzYkG8JIRk6fPTDBtXL6Ttngp0mtfQ }}
+      TELEGRAM_CHAT_ID: ${{ secrets.8056859551 }}
 
     steps:
-    # ---------------- INITIALIZE ----------------
-    - name: Initialize
-      run: |
-        echo "GitHub Run ID: ${{ github.run_id }}"
-        echo "GitHub Run Number: ${{ github.run_number }}"
-        echo "Triggered by: ${{ github.triggering_actor }}"
+      - name: Show runner info
+        shell: pwsh
+        run: |
+          whoami
+          systeminfo | findstr /B /C:"OS Name"
 
-    # ---------------- DOWNLOAD SOFTWARE ----------------
-    - name: Download Software
-      shell: pwsh
-      run: |
-        # Create Desktop directory if not exists
-        $desktop = "$env:USERPROFILE\Desktop"
-        if (-not (Test-Path $desktop)) {
-          New-Item -ItemType Directory -Path $desktop -Force
-        }
-        
-        # Download MuMu Player
-        Write-Host "Downloading MuMu Player..." -ForegroundColor Green
-        $mumuUrl = "https://a11.gdl.netease.com/MuMu_5.0.7_gw-win-download_all_1761811684.exe"
-        $mumuParams = "?n=MuMu_5.0.7_xR9fESC.exe&key1=17d527515c89765ca756ad7419678abe&key2=694d6e16"
-        $mumuPath = "$desktop\MuMuSetup.exe"
-        
-        try {
-          Invoke-WebRequest -Uri "$mumuUrl$mumuParams" -OutFile $mumuPath -UserAgent "Mozilla/5.0"
-          Write-Host "✓ MuMu downloaded successfully" -ForegroundColor Green
-        } catch {
-          Write-Host "✗ Failed to download MuMu: $_" -ForegroundColor Red
-        }
-        
-        # Download additional files
-        Write-Host "Downloading additional files..." -ForegroundColor Green
-        $zipPath = "$desktop\myfile.zip"
-        $extractPath = "$desktop\myfile_extracted"
-        
-        try {
-          $googleDriveUrl = "https://drive.usercontent.google.com/download?id=1OjkZn-dDivUQ2w91FOqp4wVzRwPzTueO&export=download&confirm=t"
-          Invoke-WebRequest -Uri $googleDriveUrl -OutFile $zipPath -UserAgent "Mozilla/5.0"
-          Write-Host "✓ Files downloaded successfully" -ForegroundColor Green
-          
-          # Extract if file exists
-          if (Test-Path $zipPath) {
-            Add-Type -AssemblyName System.IO.Compression.FileSystem
-            [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractPath)
-            Write-Host "✓ Files extracted successfully" -ForegroundColor Green
+      # ---------------- TAILSCALE ----------------
+      - name: Install and Start Tailscale
+        shell: pwsh
+        run: |
+          $exe = "$env:ProgramFiles\Tailscale\tailscale.exe"
+
+          if (-not (Test-Path $exe)) {
+            Invoke-WebRequest `
+              https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi `
+              -OutFile tailscale.msi
+            Start-Process msiexec.exe -ArgumentList "/i tailscale.msi /quiet /norestart" -Wait
           }
-        } catch {
-          Write-Host "✗ Failed to download/extract files: $_" -ForegroundColor Red
-        }
 
-    # ---------------- INSTALL PYTHON MODULES ----------------
-    - name: Install Python Modules
-      shell: pwsh
-      run: |
-        Write-Host "Updating pip..." -ForegroundColor Green
-        python -m pip install --upgrade pip --no-warn-script-location
-        
-        Write-Host "Installing Python packages..." -ForegroundColor Green
-        $packages = @(
-          "customtkinter",
-          "uiautomator2",
-          "playwright",
-          "opencv-python",
-          "requests",
-          "pyautogui",
-          "pillow"
-        )
-        
-        foreach ($pkg in $packages) {
-          try {
-            pip install $pkg --no-warn-script-location
-            Write-Host "✓ $pkg installed" -ForegroundColor Green
-          } catch {
-            Write-Host "✗ Failed to install $pkg : $_" -ForegroundColor Red
+          Start-Service Tailscale
+          Start-Sleep 10
+
+          & $exe up --authkey "${{ inputs.ts_authkey }}" --hostname "bullet"
+
+          for ($i=0; $i -lt 10; $i++) {
+            $ip = & $exe ip -4 | Select-Object -First 1
+            if ($ip) { break }
+            Start-Sleep 3
           }
-        }
-        
-        Write-Host "Installing Playwright browsers..." -ForegroundColor Green
-        playwright install chromium --with-deps
-        playwright install
 
-    # ---------------- INSTALL TAILSCALE ----------------
-    - name: Install Tailscale
-      shell: pwsh
-      run: |
-        Write-Host "Checking Tailscale installation..." -ForegroundColor Green
-        
-        $tailscaleExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-        $tailscaleInstalled = $false
-        
-        if (Test-Path $tailscaleExe) {
-          Write-Host "Tailscale already installed" -ForegroundColor Yellow
-          $tailscaleInstalled = $true
-        }
-        
-        if (-not $tailscaleInstalled) {
-          Write-Host "Downloading Tailscale installer..." -ForegroundColor Green
-          $tailscaleUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
-          
-          try {
-            Invoke-WebRequest -Uri $tailscaleUrl -OutFile $installerPath -UserAgent "Mozilla/5.0"
-            Write-Host "Installing Tailscale..." -ForegroundColor Green
-            
-            # Install silently
-            $installArgs = @(
-              "/i",
-              "`"$installerPath`"",
-              "/quiet",
-              "/norestart",
-              "/qn"
-            )
-            
-            Start-Process "msiexec.exe" -ArgumentList $installArgs -Wait -NoNewWindow
-            Write-Host "✓ Tailscale installed successfully" -ForegroundColor Green
-            
-            # Wait for installation
-            Start-Sleep -Seconds 10
-            
-          } catch {
-            Write-Host "✗ Failed to install Tailscale: $_" -ForegroundColor Red
-            exit 1
+          if (-not $ip) { throw "Tailscale IP not found" }
+
+          echo "TS_IP=$ip" >> $env:GITHUB_ENV
+          Write-Host "Tailscale IP: $ip"
+
+      # ---------------- RDP ----------------
+      - name: Enable RDP
+        shell: pwsh
+        run: |
+          $sec = ConvertTo-SecureString $env:RDP_PASS -AsPlainText -Force
+
+          if (-not (Get-LocalUser $env:RDP_USER -EA SilentlyContinue)) {
+            New-LocalUser $env:RDP_USER -Password $sec
+            Add-LocalGroupMember Administrators $env:RDP_USER
+            Add-LocalGroupMember "Remote Desktop Users" $env:RDP_USER
           }
-        }
-        
-        # Start Tailscale service
-        Write-Host "Starting Tailscale service..." -ForegroundColor Green
-        Start-Service Tailscale -ErrorAction SilentlyContinue
-        Set-Service Tailscale -StartupType Automatic -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 5
 
-    # ---------------- CONNECT TAILSCALE ----------------
-    - name: Connect Tailscale
-      shell: pwsh
-      run: |
-        Write-Host "Connecting to Tailscale..." -ForegroundColor Green
-        
-        $tailscaleExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-        $authKey = "${{ inputs.ts_authkey }}"
-        $hostname = "github-rdp-${{ github.run_id }}-${{ github.run_number }}"
-        
-        # Connect to Tailscale
-        & $tailscaleExe up --authkey $authKey --hostname $hostname --reset
-        
-        # Wait and get IP
-        Start-Sleep -Seconds 10
-        
-        $retryCount = 0
-        $maxRetries = 10
-        $tailscaleIP = $null
-        
-        while ($retryCount -lt $maxRetries -and -not $tailscaleIP) {
-          $tailscaleIP = & $tailscaleExe ip -4 2>$null | Select-Object -First 1
-          
-          if ($tailscaleIP) {
-            Write-Host "✓ Tailscale connected successfully!" -ForegroundColor Green
-            Write-Host "Tailscale IP: $tailscaleIP" -ForegroundColor Cyan
-            break
-          }
-          
-          Write-Host "Waiting for Tailscale connection... ($retryCount/$maxRetries)" -ForegroundColor Yellow
-          $retryCount++
-          Start-Sleep -Seconds 5
-        }
-        
-        if (-not $tailscaleIP) {
-          Write-Host "✗ Failed to get Tailscale IP" -ForegroundColor Red
-          
-          # Try alternative method
-          Write-Host "Trying alternative method..." -ForegroundColor Yellow
-          $tailscaleStatus = & $tailscaleExe status 2>$null
-          Write-Host "Tailscale Status: $tailscaleStatus"
-          
-          exit 1
-        }
-        
-        # Set environment variable
-        echo "TS_IP=$tailscaleIP" >> $env:GITHUB_ENV
-        echo "RDP_HOSTNAME=$hostname" >> $env:GITHUB_ENV
+          Set-ItemProperty `
+            "HKLM:\System\CurrentControlSet\Control\Terminal Server" `
+            -Name fDenyTSConnections -Value 0
 
-    # ---------------- SETUP RDP ----------------
-    - name: Setup RDP Access
-      shell: pwsh
-      run: |
-        Write-Host "Configuring Remote Desktop..." -ForegroundColor Green
-        
-        # Enable RDP
-        Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" `
-          -Name "fDenyTSConnections" -Value 0 -Force
-        
-        # Disable NLA (for easier connection)
-        Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" `
-          -Name "UserAuthentication" -Value 0 -Force
-        
-        # Create user
-        $username = "$env:RDP_USER"
-        $password = "$env:RDP_PASS"
-        
-        Write-Host "Creating user: $username" -ForegroundColor Green
-        
-        # Convert password to secure string
-        $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
-        
-        # Check if user exists
-        try {
-          $user = Get-LocalUser -Name $username -ErrorAction Stop
-          Write-Host "User already exists, updating password..." -ForegroundColor Yellow
-          Set-LocalUser -Name $username -Password $securePassword
-        } catch {
-          Write-Host "Creating new user..." -ForegroundColor Green
-          New-LocalUser -Name $username -Password $securePassword -PasswordNeverExpires
-        }
-        
-        # Add to groups
-        $groups = @("Administrators", "Remote Desktop Users")
-        foreach ($group in $groups) {
-          try {
-            Add-LocalGroupMember -Group $group -Member $username -ErrorAction SilentlyContinue
-            Write-Host "✓ Added to $group group" -ForegroundColor Green
-          } catch {
-            Write-Host "Already in $group group" -ForegroundColor Yellow
-          }
-        }
-        
-        # Configure firewall
-        Write-Host "Configuring firewall..." -ForegroundColor Green
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
-        
-        # Allow RDP in Windows Defender Firewall
-        netsh advfirewall firewall add rule name="Open RDP Port 3389" dir=in action=allow protocol=TCP localport=3389
-        
-        Write-Host "✓ RDP configured successfully" -ForegroundColor Green
-        Write-Host "RDP Username: $username" -ForegroundColor Cyan
-        Write-Host "RDP Password: $password" -ForegroundColor Cyan
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-    # ---------------- SEND TELEGRAM NOTIFICATION ----------------
-    - name: Send Telegram Notification
-      shell: pwsh
-      env:
-        BOT_TOKEN: ${{ inputs.bot_token }}
-        CHAT_ID: ${{ inputs.chat_id }}
-        TS_IP: ${{ env.TS_IP }}
-        RDP_USER: ${{ env.RDP_USER }}
-        RDP_PASS: ${{ env.RDP_PASS }}
-      run: |
-        Write-Host "Sending Telegram notification..." -ForegroundColor Green
-        
-        $message = @"
-🎉 *RDP READY!*
+      # ---------------- PYTHON ----------------
+      - name: Install Python modules
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install customtkinter uiautomator2 opencv-python playwright
+          py -m playwright install
 
-✅ *Connection Details:*
-• *IP:* `$env:TS_IP`
-• *Username:* `$env:RDP_USER`
-• *Password:* `$env:RDP_PASS`
-• *Port:* 3389
+      # ---------------- DOWNLOAD MUMU ----------------
+      - name: Download MuMu
+        shell: pwsh
+        run: |
+          curl -L -o "C:\Users\mtqmanik\Desktop\MuMuSetup.exe" "https://a11.gdl.netease.com/MuMu_5.0.7_gw-win-download_all_1761811684.exe?n=MuMu_5.0.7_xR9fESC.exe&key1=17d527515c89765ca756ad7419678abe&key2=694d6e16"
+          Start-Process "C:\Users\mtqmanik\Desktop\MuMuSetup.exe" -ArgumentList "/S" -Wait
 
-📁 *Installed Software:*
-• MuMu Player (Desktop)
-• Python with automation modules
-• Tailscale VPN
+      # ---------------- DOWNLOAD ZIP FILE ----------------
+      - name: Download and Extract File
+        shell: pwsh
+        run: |
+          $zipPath = "C:\Users\mtqmanik\Desktop\myfile.zip"
+          $extractPath = "C:\Users\mtqmanik\Desktop\myfile_extracted"
+          Invoke-WebRequest -Uri "https://drive.usercontent.google.com/download?id=1OjkZn-dDivUQ2w91FOqp4wVzRwPzTueO&export=download&confirm=t&uuid=ba3fa931-9599-4946-81e6-ebbbf490ee7f" -OutFile $zipPath
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractPath)
 
-⏰ *Duration:* 6 Hours
-🖥️ *Hostname:* $env:RDP_HOSTNAME
+      # ---------------- SEND TELEGRAM ----------------
+      - name: Send RDP info to Telegram
+        shell: pwsh
+        run: |
+          $msg = "✅ RDP is ready`nIP: $env:TS_IP`nUsername: $env:RDP_USER`nPassword: $env:RDP_PASS"
+          $url = "https://api.telegram.org/bot$($env:TELEGRAM_BOT_TOKEN)/sendMessage?chat_id=$($env:TELEGRAM_CHAT_ID)&text=$([uri]::EscapeDataString($msg))"
+          Invoke-WebRequest -Uri $url -UseBasicParsing
 
-🔗 *How to Connect:*
-1. Install Tailscale on your PC
-2. Connect to same Tailnet
-3. Open Remote Desktop (mstsc)
-4. Enter: $env:TS_IP
-5. Use credentials above
+      # ---------------- KEEP ALIVE ----------------
+      - name: Keep alive
+        shell: pwsh
+        run: |
+          Start-Sleep -Seconds 21600
 
-⚠️ *Note:*
-• Session auto-terminates after 6h
-• Don't share credentials
-• Use for legitimate purposes
-"@
-
-        # URL encode the message
-        $encodedMessage = [Uri]::EscapeDataString($message)
-        
-        # Telegram API URL
-        $telegramUrl = "https://api.telegram.org/bot$env:BOT_TOKEN/sendMessage"
-        
-        # Send request
-        $body = @{
-          chat_id = $env:CHAT_ID
-          text = $message
-          parse_mode = "Markdown"
-          disable_web_page_preview = $true
-        }
-        
-        try {
-          $response = Invoke-RestMethod -Uri $telegramUrl -Method Post -Body $body -ContentType "application/json"
-          Write-Host "✓ Telegram notification sent successfully!" -ForegroundColor Green
-        } catch {
-          Write-Host "✗ Failed to send Telegram: $($_.Exception.Message)" -ForegroundColor Red
-          
-          # Try alternative method
-          try {
-            $formBody = @{
-              chat_id = $env:CHAT_ID
-              text = $message
-              parse_mode = "Markdown"
-            }
-            
-            Invoke-RestMethod -Uri $telegramUrl -Method Post -Body $formBody
-            Write-Host "✓ Telegram sent via alternative method" -ForegroundColor Green
-          } catch {
-            Write-Host "✗ All Telegram methods failed" -ForegroundColor Red
-          }
-        }
-
-    # ---------------- KEEP RUNNER ALIVE ----------------
-    - name: Keep Alive
-      shell: pwsh
-      run: |
-        Write-Host "╔═══════════════════════════════════════════╗" -ForegroundColor Cyan
-        Write-Host "║          RDP SESSION ACTIVE              ║" -ForegroundColor Cyan
-        Write-Host "╠═══════════════════════════════════════════╣" -ForegroundColor Cyan
-        Write-Host "║ IP:        $env:TS_IP" -ForegroundColor White
-        Write-Host "║ Username:  $env:RDP_USER" -ForegroundColor White
-        Write-Host "║ Password:  $env:RDP_PASS" -ForegroundColor White
-        Write-Host "║ Port:      3389" -ForegroundColor White
-        Write-Host "║ Duration:  6 Hours" -ForegroundColor White
-        Write-Host "╚═══════════════════════════════════════════╝" -ForegroundColor Cyan
-        Write-Host ""
-        Write-Host "⏳ RDP will be active for 6 hours..." -ForegroundColor Yellow
-        Write-Host "🔄 Monitoring session..." -ForegroundColor Green
-        
-        # Keep alive for 6 hours (21600 seconds)
-        $startTime = Get-Date
-        $endTime = $startTime.AddHours(6)
-        
-        while ((Get-Date) -lt $endTime) {
-          $remaining = $endTime - (Get-Date)
-          $hours = [math]::Floor($remaining.TotalHours)
-          $minutes = [math]::Floor($remaining.TotalMinutes % 60)
-          $seconds = [math]::Floor($remaining.TotalSeconds % 60)
-          
-          Write-Host "⏰ Remaining: $hours hours $minutes minutes $seconds seconds" -ForegroundColor Gray
-          
-          # Check Tailscale connection every 30 seconds
-          $tailscaleExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          $ip = & $tailscaleExe ip -4 2>$null | Select-Object -First 1
-          
-          if ($ip) {
-            Write-Host "✓ Tailscale connected: $ip" -ForegroundColor Green
-          } else {
-            Write-Host "✗ Tailscale disconnected, reconnecting..." -ForegroundColor Red
-            & $tailscaleExe up --authkey "${{ inputs.ts_authkey }}" --reset
-          }
-          
-          # Sleep for 30 seconds
-          Start-Sleep -Seconds 30
-        }
-        
-        Write-Host "⏰ Session time completed!" -ForegroundColor Yellow
-
-    # ---------------- CLEANUP ----------------
-    - name: Cleanup and Notify
-      if: always()
-      shell: pwsh
-      env:
-        BOT_TOKEN: ${{ inputs.bot_token }}
-        CHAT_ID: ${{ inputs.chat_id }}
-      run: |
-        Write-Host "Cleaning up..." -ForegroundColor Yellow
-        
-        # Disconnect Tailscale
-        try {
-          $tailscaleExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          & $tailscaleExe down
-          Write-Host "✓ Tailscale disconnected" -ForegroundColor Green
-        } catch {
-          Write-Host "✗ Failed to disconnect Tailscale" -ForegroundColor Red
-        }
-        
-        # Send completion notification
-        $completionMessage = "✅ RDP session completed. Runner shutting down."
-        
-        try {
-          $telegramUrl = "https://api.telegram.org/bot$env:BOT_TOKEN/sendMessage"
-          $body = @{
-            chat_id = $env:CHAT_ID
-            text = $completionMessage
-          }
-          
-          Invoke-RestMethod -Uri $telegramUrl -Method Post -Body $body -ContentType "application/json"
-          Write-Host "✓ Cleanup notification sent" -ForegroundColor Green
-        } catch {
-          Write-Host "✗ Failed to send cleanup notification" -ForegroundColor Red
-        }
-        
-        Write-Host "🎯 Process completed!" -ForegroundColor Green
+      - name: Done
+        shell: pwsh
+        run: |
+          Write-Host "DONE"
+          Write-Host "RDP IP: $env:TS_IP"
