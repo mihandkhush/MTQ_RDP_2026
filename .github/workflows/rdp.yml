@@ -17,51 +17,38 @@ jobs:
       RDP_PASS: Manik2200@@
 
     steps:
-    # ---------------- BASIC ----------------
+    # ---------------- CHECKOUT ----------------
     - name: Checkout Repo
       uses: actions/checkout@v4
 
-    - name: Show System Info
+    # ---------------- SYSTEM ----------------
+    - name: System Info
       shell: pwsh
       run: |
         whoami
         systeminfo | findstr /B /C:"OS Name"
 
-    # ---------------- AUTH KEY HANDLE ----------------
-    - name: Read & Consume Tailscale Auth Key
+    # ---------------- AUTH KEY ----------------
+    - name: Read & Consume Auth Key
       shell: pwsh
       run: |
         $authFile = "$env:GITHUB_WORKSPACE\auth.txt"
         $usedFile = "$env:GITHUB_WORKSPACE\used.txt"
 
-        if (-not (Test-Path $authFile)) {
-          throw "auth.txt not found"
-        }
-
-        if (-not (Test-Path $usedFile)) {
-          New-Item $usedFile -ItemType File | Out-Null
-        }
+        if (-not (Test-Path $authFile)) { throw "auth.txt missing" }
+        if (-not (Test-Path $usedFile)) { New-Item $usedFile -ItemType File | Out-Null }
 
         $keys = Get-Content $authFile | Where-Object { $_.Trim() -ne "" }
+        if ($keys.Count -eq 0) { throw "No auth key left" }
 
-        if ($keys.Count -eq 0) {
-          throw "No auth key left in auth.txt"
-        }
-
-        $key = $keys[0]
-        Write-Host "Using Auth Key: $key"
-
+        $key = $keys[0].Trim()
         echo "TS_KEY=$key" >> $env:GITHUB_ENV
 
-        # Save used key
-        Add-Content -Path $usedFile -Value $key
-
-        # Remove used key from auth.txt
-        $remaining = $keys | Select-Object -Skip 1
-        Set-Content -Path $authFile -Value $remaining
+        Add-Content $usedFile $key
+        $keys | Select-Object -Skip 1 | Set-Content $authFile
 
     # ---------------- TAILSCALE ----------------
-    - name: Install & Start Tailscale
+    - name: Install & Login Tailscale (FIXED)
       shell: pwsh
       run: |
         $exe = "$env:ProgramFiles\Tailscale\tailscale.exe"
@@ -74,17 +61,24 @@ jobs:
         }
 
         Start-Service Tailscale
-        Start-Sleep 10
+        Start-Sleep 8
 
-        & $exe up --authkey "$env:TS_KEY" --hostname "MTQ-RDP"
+        & $exe logout | Out-Null
+        Start-Sleep 3
 
-        for ($i=0; $i -lt 10; $i++) {
+        & $exe up `
+          --authkey="$env:TS_KEY" `
+          --hostname="MTQ-RDP" `
+          --force-reauth `
+          --reset
+
+        for ($i=0; $i -lt 15; $i++) {
           $ip = & $exe ip -4 | Select-Object -First 1
           if ($ip) { break }
           Start-Sleep 3
         }
 
-        if (-not $ip) { throw "Tailscale IP not found" }
+        if (-not $ip) { throw "Tailscale login failed" }
 
         echo "TS_IP=$ip" >> $env:GITHUB_ENV
         Write-Host "RDP IP: $ip"
@@ -107,29 +101,29 @@ jobs:
 
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-    # ---------------- DOWNLOAD MUMU ----------------
+    # ---------------- MUMU ----------------
     - name: Download MuMu Player
       shell: pwsh
       run: |
         curl -L -o "C:\Users\mtqmanik\Desktop\MuMuSetup.exe" `
         "https://a11.gdl.netease.com/MuMu_5.0.7_gw-win-download_all_1761811684.exe?n=MuMu_5.0.7_xR9fESC.exe&key1=17d527515c89765ca756ad7419678abe&key2=694d6e16"
 
-    # ---------------- DOWNLOAD ZIP ----------------
+    # ---------------- ZIP ----------------
     - name: Download & Extract ZIP
       shell: pwsh
       run: |
-        $zipPath = "C:\Users\mtqmanik\Desktop\myfile.zip"
-        $extractPath = "C:\Users\mtqmanik\Desktop\myfile_extracted"
+        $zip = "C:\Users\mtqmanik\Desktop\myfile.zip"
+        $out = "C:\Users\mtqmanik\Desktop\myfile_extracted"
 
         Invoke-WebRequest `
           -Uri "https://drive.usercontent.google.com/download?id=1OjkZn-dDivUQ2w91FOqp4wVzRwPzTueO&export=download&confirm=t" `
-          -OutFile $zipPath
+          -OutFile $zip
 
         Add-Type -AssemblyName System.IO.Compression.FileSystem
-        [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractPath)
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $out)
 
     # ---------------- KEEP ALIVE ----------------
-    - name: Keep RDP Alive
+    - name: Keep Alive
       shell: pwsh
       run: |
         Start-Sleep -Seconds 21600
