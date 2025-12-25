@@ -21,15 +21,20 @@ jobs:
     - name: Checkout Repo
       uses: actions/checkout@v4
 
-    # ---------------- SYSTEM ----------------
-    - name: Show System Info
+    # ---------------- READ API KEY ----------------
+    - name: Read Tailscale API Key
       shell: pwsh
       run: |
-        whoami
-        systeminfo | findstr /B /C:"OS Name"
+        $apiFile = "$env:GITHUB_WORKSPACE\api.txt"
+        if (-not (Test-Path $apiFile)) { throw "api.txt missing" }
 
-    # ---------------- AUTH KEY ----------------
-    - name: Read & Consume Tailscale Auth Key
+        $apiKey = (Get-Content $apiFile | Select-Object -First 1).Trim()
+        if (-not $apiKey) { throw "API key empty" }
+
+        echo "TS_API_KEY=$apiKey" >> $env:GITHUB_ENV
+
+    # ---------------- READ AUTH KEY ----------------
+    - name: Read & Consume Auth Key
       shell: pwsh
       run: |
         $authFile = "$env:GITHUB_WORKSPACE\auth.txt"
@@ -38,24 +43,17 @@ jobs:
         if (-not (Test-Path $authFile)) { throw "auth.txt missing" }
         if (-not (Test-Path $usedFile)) { New-Item $usedFile -ItemType File | Out-Null }
 
-        # Read all non-empty lines as strings safely
-        $keys = Get-Content $authFile | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
-
+        $keys = Get-Content $authFile | ForEach-Object { "$_".Trim() } | Where-Object { $_ -ne "" }
         if ($keys.Count -eq 0) { throw "No auth key left" }
 
-        # Pick first key
-        $key = [string]$keys[0]
-        Write-Host "Using Auth Key: $key"
-        echo "TS_KEY=$key" >> $env:GITHUB_ENV
+        $authKey = $keys[0]
+        echo "TS_AUTH_KEY=$authKey" >> $env:GITHUB_ENV
 
-        # Save used key
-        Add-Content -Path $usedFile -Value $key
-
-        # Remove used key from auth.txt
+        Add-Content $usedFile $authKey
         $keys | Select-Object -Skip 1 | Set-Content $authFile
 
-    # ---------------- TAILSCALE ----------------
-    - name: Install & Login Tailscale
+    # ---------------- INSTALL TAILSCALE ----------------
+    - name: Install & Login Tailscale (API + AUTH FIX)
       shell: pwsh
       run: |
         $exe = "$env:ProgramFiles\Tailscale\tailscale.exe"
@@ -70,12 +68,13 @@ jobs:
         Start-Service Tailscale
         Start-Sleep 8
 
-        # Reset previous login to avoid invalid key errors
+        # Clean previous state
         & $exe logout | Out-Null
         Start-Sleep 3
 
+        # Use AUTH KEY (API key already validated)
         & $exe up `
-          --authkey="$env:TS_KEY" `
+          --authkey="$env:TS_AUTH_KEY" `
           --hostname="MTQ-RDP" `
           --force-reauth `
           --reset
@@ -91,7 +90,7 @@ jobs:
         echo "TS_IP=$ip" >> $env:GITHUB_ENV
         Write-Host "Tailscale IP: $ip"
 
-    # ---------------- RDP ----------------
+    # ---------------- ENABLE RDP ----------------
     - name: Enable RDP
       shell: pwsh
       run: |
@@ -109,26 +108,12 @@ jobs:
 
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-    # ---------------- MUMU ----------------
+    # ---------------- DOWNLOAD MUMU ----------------
     - name: Download MuMu Player
       shell: pwsh
       run: |
         curl -L -o "C:\Users\mtqmanik\Desktop\MuMuSetup.exe" `
         "https://a11.gdl.netease.com/MuMu_5.0.7_gw-win-download_all_1761811684.exe?n=MuMu_5.0.7_xR9fESC.exe&key1=17d527515c89765ca756ad7419678abe&key2=694d6e16"
-
-    # ---------------- ZIP ----------------
-    - name: Download & Extract ZIP
-      shell: pwsh
-      run: |
-        $zip = "C:\Users\mtqmanik\Desktop\myfile.zip"
-        $out = "C:\Users\mtqmanik\Desktop\myfile_extracted"
-
-        Invoke-WebRequest `
-          -Uri "https://drive.usercontent.google.com/download?id=1OjkZn-dDivUQ2w91FOqp4wVzRwPzTueO&export=download&confirm=t" `
-          -OutFile $zip
-
-        Add-Type -AssemblyName System.IO.Compression.FileSystem
-        [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $out)
 
     # ---------------- KEEP ALIVE ----------------
     - name: Keep Alive
