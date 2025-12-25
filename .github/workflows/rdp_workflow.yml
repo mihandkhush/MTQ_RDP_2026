@@ -1,0 +1,108 @@
+name: RDP 2026
+
+on:
+  workflow_dispatch:
+    inputs:
+      ts_authkey:
+        description: "Tailscale Auth key"
+        required: true
+      chat_id:
+        description: "Telegram Chat ID"
+        required: true
+      cycles:
+        description: "Number of cycles"
+        required: false
+        default: "1"
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  full:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    env:
+      RDP_USER: mtqmanik
+      RDP_PASS: Manik2200@@
+      MAIN_RUNTIME_MIN: 360
+
+    steps:
+      # ---------------- BASIC ----------------
+      - name: Show runner info
+        shell: pwsh
+        run: |
+          whoami
+          systeminfo | findstr /B /C:"OS Name"
+
+      # ---------------- TAILSCALE ----------------
+      - name: Install and Start Tailscale
+        shell: pwsh
+        run: |
+          $exe = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          if (-not (Test-Path $exe)) {
+            Invoke-WebRequest https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi -OutFile tailscale.msi
+            Start-Process msiexec.exe -ArgumentList "/i tailscale.msi /quiet /norestart" -Wait
+          }
+          Start-Service Tailscale
+          Start-Sleep 10
+          & $exe up --authkey "${{ inputs.ts_authkey }}" --hostname "bullet"
+          for ($i=0; $i -lt 10; $i++) {
+            $ip = & $exe ip -4 | Select-Object -First 1
+            if ($ip) { break }
+            Start-Sleep 3
+          }
+          if (-not $ip) { throw "Tailscale IP not found" }
+          echo "TS_IP=$ip" >> $env:GITHUB_ENV
+          Write-Host "Tailscale IP: $ip"
+
+      # ---------------- RDP ----------------
+      - name: Enable RDP
+        shell: pwsh
+        run: |
+          $sec = ConvertTo-SecureString $env:RDP_PASS -AsPlainText -Force
+          if (-not (Get-LocalUser $env:RDP_USER -EA SilentlyContinue)) {
+            New-LocalUser $env:RDP_USER -Password $sec
+            Add-LocalGroupMember Administrators $env:RDP_USER
+            Add-LocalGroupMember "Remote Desktop Users" $env:RDP_USER
+          }
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+      # ---------------- SOFTWARE & FILES ----------------
+      - name: Install Software and Files
+        shell: pwsh
+        run: |
+          # Python Modules
+          python -m pip install --upgrade pip
+          pip install customtkinter uiautomator2 opencv-python playwright
+          playwright install
+
+          # Download MuMu Player
+          $mumuPath = "C:\Users\mtqmanik\Desktop\MuMuSetup.exe"
+          Invoke-WebRequest -Uri "https://a11.gdl.netease.com/MuMu_5.0.7_gw-win-download_all_1761811684.exe?n=MuMu_5.0.7_xR9fESC.exe&key1=17d527515c89765ca756ad7419678abe&key2=694d6e16" -OutFile $mumuPath
+          Write-Host "MuMu Player downloaded to $mumuPath"
+
+          # Download and Extract Zip
+          $zipPath = "C:\Users\mtqmanik\Desktop\myfile.zip"
+          $extractPath = "C:\Users\mtqmanik\Desktop\myfile_extracted"
+          Invoke-WebRequest -Uri "https://drive.usercontent.google.com/download?id=1OjkZn-dDivUQ2w91FOqp4wVzRwPzTueO&export=download&confirm=t&uuid=ba3fa931-9599-4946-81e6-ebbbf490ee7f" -OutFile $zipPath
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractPath)
+          Write-Host "Files extracted to $extractPath"
+
+      # ---------------- NOTIFY TELEGRAM ----------------
+      - name: Send Info to Telegram
+        shell: pwsh
+        run: |
+          $msg = "✅ *RDP Ready!*`n`n🖥 IP: $($env:TS_IP)`n👤 User: $($env:RDP_USER)`n🔑 Pass: $($env:RDP_PASS)"
+          $token = "${{ secrets.TELEGRAM_TOKEN }}"
+          $chatId = "${{ inputs.chat_id }}"
+          $uri = "https://api.telegram.org/bot$token/sendMessage"
+          $body = @{ chat_id = $chatId; text = $msg; parse_mode = "Markdown" }
+          Invoke-RestMethod -Uri $uri -Method Post -Body $body
+
+      # ---------------- KEEP ALIVE ----------------
+      - name: Keep alive
+        shell: pwsh
+        run: Start-Sleep -Seconds 21600
